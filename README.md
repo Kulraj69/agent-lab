@@ -47,3 +47,13 @@ python3 -m unittest discover -s tests
 they run against a real agent. MiniAgent is that owned target today; the same
 interfaces wrap any future agent we build (a Qualifier or Leash build) without
 changing the graders or probes.
+
+## Demo
+
+`demo.py` reproduces the recorded demo run end to end, offline (standard
+library only, no model calls):
+
+    python demo.py
+
+It executes the library's real code path and prints the same output shown in
+the recorded demo video.
