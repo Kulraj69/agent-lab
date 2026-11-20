@@ -57,3 +57,7 @@ library only, no model calls):
 
 It executes the library's real code path and prints the same output shown in
 the recorded demo video.
+
+## Connected execution and promotion demo
+
+See [integration/QUICKSTART.md](integration/QUICKSTART.md) for a deterministic local-tool example connecting execution traces, regression checks and synthetic-feedback dataset promotion. It includes pinned sibling patches, negative controls and reproducible tests. This is a local demonstration, not a production or LLM-performance claim.

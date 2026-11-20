@@ -1,0 +1,45 @@
+name: Connected deterministic loop
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  connected-loop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: agent-lab
+      - uses: actions/checkout@v4
+        with:
+          repository: Kulraj69/trajectory-eval
+          ref: 63dd422bfbdeebff6fbc5fb5dbe73f235ee5919e
+          path: trajectory-eval
+      - uses: actions/checkout@v4
+        with:
+          repository: Kulraj69/data-flywheel
+          ref: 265694496e5fdaa30197c463ed7448b2252a5269
+          path: data-flywheel
+      - uses: actions/checkout@v4
+        with:
+          repository: Kulraj69/redteam-scanner
+          ref: 865b9c1799e844d378280ade6b86996bbec03883
+          path: redteam-scanner
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Apply reviewed sibling deltas
+        run: |
+          git -C trajectory-eval apply ../agent-lab/integration/patches/trajectory-eval.patch
+          git -C data-flywheel apply ../agent-lab/integration/patches/data-flywheel.patch
+      - name: Verify local tests and demo
+        env:
+          PYTHONPATH: .:agent-lab:trajectory-eval:data-flywheel:redteam-scanner
+        run: |
+          python -m unittest discover -s trajectory-eval/tests -v
+          python -m unittest discover -s data-flywheel/tests -v
+          python -m unittest discover -s agent-lab/tests -v
+          python -m unittest discover -s agent-lab/integration -v
+          python agent-lab/connected_loop.py --output demo-output
