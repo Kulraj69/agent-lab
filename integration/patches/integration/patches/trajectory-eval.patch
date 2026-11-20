@@ -1,0 +1,102 @@
+diff --git a/teval/gate.py b/teval/gate.py
+index 6cbde24..15b413d 100644
+--- a/teval/gate.py
++++ b/teval/gate.py
+@@ -40,8 +40,19 @@ def load_baseline(path: str) -> dict:
+ 
+ def check(result: RunResult, baseline: dict, tolerance: float = 0.0) -> GateResult:
+     regressions = []
++    seen = set()
+     for r in result.results:
++        if r.trajectory_id in seen:
++            regressions.append(f"duplicate trajectory: {r.trajectory_id}")
++        seen.add(r.trajectory_id)
+         base = baseline.get(r.trajectory_id)
++        if base is not None:
++            present = {g.name for g in r.grades}
++            for name in sorted(set(base) - present):
++                regressions.append(f"{r.trajectory_id}/{name}: missing grader")
++        names = [g.name for g in r.grades]
++        if len(names) != len(set(names)):
++            regressions.append(f"{r.trajectory_id}: duplicate grader")
+         if base is None:
+             continue  # new trajectory: not a regression, just unbaselined
+         for g in r.grades:
+@@ -52,4 +63,6 @@ def check(result: RunResult, baseline: dict, tolerance: float = 0.0) -> GateResu
+                 regressions.append(
+                     f"{r.trajectory_id}/{g.name}: {prev:.3f} -> {g.score:.3f}"
+                 )
++    for tid in sorted(set(baseline) - seen):
++        regressions.append(f"{tid}: missing baseline trajectory")
+     return GateResult(ok=not regressions, regressions=regressions)
+diff --git a/teval/schema.py b/teval/schema.py
+index f290ba7..3921787 100644
+--- a/teval/schema.py
++++ b/teval/schema.py
+@@ -41,10 +41,15 @@ class Step:
+             raise SchemaError(f"step kind must be thought/tool_call/tool_result/answer, got {kind!r}")
+         tc = d.get("tool_call")
+         tool_call = None
++        if kind == "tool_call" and tc is None:
++            raise SchemaError("tool_call step requires a tool_call object")
+         if tc is not None:
+-            if not isinstance(tc, dict) or not isinstance(tc.get("name"), str):
+-                raise SchemaError("tool_call must be an object with a string 'name'")
+-            tool_call = ToolCall(name=tc["name"], arguments=tc.get("arguments") or {})
++            if not isinstance(tc, dict) or not isinstance(tc.get("name"), str) or not tc["name"].strip():
++                raise SchemaError("tool_call requires a non-empty string name")
++            args = tc.get("arguments", {})
++            if not isinstance(args, dict):
++                raise SchemaError("tool_call arguments must be an object")
++            tool_call = ToolCall(name=tc["name"], arguments=args)
+         tokens = d.get("tokens", 0)
+         if not isinstance(tokens, int) or tokens < 0:
+             raise SchemaError("tokens must be a non-negative int")
+diff --git a/tests/test_gate_coverage.py b/tests/test_gate_coverage.py
+new file mode 100644
+index 0000000..b284022
+--- /dev/null
++++ b/tests/test_gate_coverage.py
+@@ -0,0 +1,14 @@
++import unittest
++from teval.gate import check
++from teval.harness import RunResult, TrajectoryResult
++from teval.graders import Grade
++
++class CoverageTests(unittest.TestCase):
++    def result(self, ids=('a',), grades=('quality',)):
++        return RunResult([TrajectoryResult(t, [Grade(g, 1, []) for g in grades]) for t in ids])
++    def test_missing_trajectory_fails(self): self.assertFalse(check(self.result(()), {'a':{'quality':1}}).ok)
++    def test_missing_grader_fails(self): self.assertFalse(check(self.result(grades=()), {'a':{'quality':1}}).ok)
++    def test_duplicate_trajectory_fails(self): self.assertFalse(check(self.result(('a','a')), {'a':{'quality':1}}).ok)
++    def test_duplicate_grader_fails(self): self.assertFalse(check(self.result(grades=('quality','quality')), {'a':{'quality':1}}).ok)
++    def test_full_coverage_passes(self): self.assertTrue(check(self.result(), {'a':{'quality':1}}).ok)
++    def test_additional_trajectory_allowed(self): self.assertTrue(check(self.result(('a','b')), {'a':{'quality':1}}).ok)
+diff --git a/tests/test_schema_tool_calls.py b/tests/test_schema_tool_calls.py
+new file mode 100644
+index 0000000..91f6489
+--- /dev/null
++++ b/tests/test_schema_tool_calls.py
+@@ -0,0 +1,22 @@
++import unittest
++from teval.schema import SchemaError, Step
++
++class ToolCallShapeTests(unittest.TestCase):
++    def test_missing_call_fails(self):
++        with self.assertRaises(SchemaError): Step.from_dict({'kind':'tool_call'})
++    def test_null_call_fails(self):
++        with self.assertRaises(SchemaError): Step.from_dict({'kind':'tool_call','tool_call':None})
++    def test_empty_name_fails(self):
++        with self.assertRaises(SchemaError): Step.from_dict({'kind':'tool_call','tool_call':{'name':''}})
++    def test_blank_name_fails(self):
++        with self.assertRaises(SchemaError): Step.from_dict({'kind':'tool_call','tool_call':{'name':'  '}})
++    def test_non_object_arguments_fail(self):
++        for args in (None,[],False,0,'bad'):
++            with self.subTest(args=args), self.assertRaises(SchemaError):
++                Step.from_dict({'kind':'tool_call','tool_call':{'name':'calc','arguments':args}})
++    def test_omitted_arguments_default_empty(self):
++        self.assertEqual(Step.from_dict({'kind':'tool_call','tool_call':{'name':'calc'}}).tool_call.arguments,{})
++    def test_valid_arguments_retained(self):
++        self.assertEqual(Step.from_dict({'kind':'tool_call','tool_call':{'name':'calc','arguments':{'x':2}}}).tool_call.arguments,{'x':2})
++    def test_ordinary_thought_does_not_need_call(self):
++        self.assertIsNone(Step.from_dict({'kind':'thought'}).tool_call)
